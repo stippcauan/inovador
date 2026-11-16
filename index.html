@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapeador Colaborativo de Acessibilidade - Paraná</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; font-family: Arial, sans-serif; display: flex; flex-direction: column; }
+        header { background-color: #0056b3; color: white; padding: 14px; text-align: center; }
+        .main-container { display: flex; flex: 1; height: calc(100vh - 58px); overflow: hidden; }
+        #sidebar { width: 380px; padding: 20px; border-right: 1px solid #ccc; overflow-y: auto; background: #fff; }
+        #map { flex: 1; height: 100%; min-height: 400px; background-color: #e5e3df; }
+        .form-group { margin-bottom: 12px; display: flex; flex-direction: column; position: relative; }
+        label { font-weight: bold; font-size: 0.85rem; margin-bottom: 4px; }
+        input, select, textarea, button { padding: 9px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #0056b3; }
+        button { background-color: #0056b3; color: white; font-weight: bold; cursor: pointer; border: none; margin-top: 5px; }
+        button:hover { background-color: #004085; }
+
+        .autocomplete-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border: 1px solid #0056b3;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            display: none;
+        }
+        .autocomplete-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-bottom: 1px solid #eee;
+        }
+        .autocomplete-item:hover {
+            background-color: #e9f2ff;
+            color: #0056b3;
+            font-weight: bold;
+        }
+
+        .cidade-ativa-badge {
+            background-color: #e9f2ff;
+            color: #004085;
+            padding: 7px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            margin-top: 6px;
+            border: 1px solid #b8daff;
+        }
+
+        .poi-status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f1f3f5;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-top: 6px;
+            color: #333;
+        }
+
+        .pin-status { background-color: #e9ecef; border-left: 4px solid #0056b3; padding: 10px; border-radius: 4px; font-size: 0.85rem; margin-bottom: 10px; }
+        .point-card { border: 1px solid #ddd; padding: 12px; margin-top: 10px; border-radius: 6px; background-color: #f9f9f9; cursor: pointer; }
+        .point-card:hover { border-color: #0056b3; }
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; color: #fff; font-weight: bold; }
+        .badge-total { background-color: #28a745; }
+        .badge-parcial { background-color: #ffc107; color: #000; }
+        .badge-inacessivel { background-color: #dc3545; }
+
+        .poi-pin {
+            background-color: #6f42c1;
+            color: white;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            width: 26px;
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.35);
+            cursor: pointer;
+        }
+        .poi-pin:hover {
+            transform: scale(1.15);
+            background-color: #59339d;
+        }
+
+        .map-legend {
+            background: white;
+            padding: 10px 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            font-size: 0.8rem;
+            line-height: 1.6;
+        }
+        .legend-dot {
+            display: inline-block;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>♿ Mapeador Colaborativo de Acessibilidade - Paraná</h1>
+    </header>
+
+    <div class="main-container">
+        <aside id="sidebar">
+            <h2>1. Escolha a Cidade (PR)</h2>
+
+            <div class="form-group" style="margin-top: 10px;">
+                <label for="cidadeInput">Pesquisar Cidade do Paraná (399 municípios):</label>
+                <input type="text" id="cidadeInput" placeholder="Digite o nome da cidade..." autocomplete="off">
+                <div id="cidadeDropdown" class="autocomplete-list"></div>
+                <div id="cidadeAtivaInfo" class="cidade-ativa-badge">
+                    📍 Mapa focado em: <strong>Curitiba - PR</strong>
+                </div>
+                <div class="poi-status-bar">
+                    <span id="poiCounter">🏪 Carregando estabelecimentos...</span>
+                    <button type="button" onclick="buscarEstabelecimentosNaArea(true)" style="margin:0; padding:4px 8px; font-size:0.75rem;">Atualizar</button>
+                </div>
+            </div>
+
+            <hr style="margin: 15px 0;">
+
+            <h2>2. Avaliar Estabelecimento</h2>
+            <form id="locationForm" style="margin-top: 8px;">
+                <div id="pinStatus" class="pin-status">
+                    📍 <strong>Clique em um estabelecimento roxo (🏪)</strong> no mapa ou em qualquer local da rua para avaliar.
+                </div>
+
+                <input type="hidden" id="lat">
+                <input type="hidden" id="lng">
+
+                <div class="form-group">
+                    <label for="estabelecimento">Nome do Estabelecimento / Local:</label>
+                    <input type="text" id="estabelecimento" placeholder="Clique no mapa ou digite o nome..." required>
+                </div>
+
+                <div class="form-group">
+                    <label for="type">Recurso de Acessibilidade:</label>
+                    <select id="type">
+                        <option value="Rampa de Acesso">Rampa de Acesso</option>
+                        <option value="Elevador Adaptado">Elevador Adaptado</option>
+                        <option value="Banheiro Acessível">Banheiro Acessível</option>
+                        <option value="Piso Tátil">Piso Tátil</option>
+                        <option value="Vaga Reservada">Vaga Reservada</option>
+                        <option value="Sinalização Sonora">Sinalização Sonora</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="status">Nível de Acessibilidade:</label>
+                    <select id="status">
+                        <option value="total">Totalmente Acessível</option>
+                        <option value="parcial">Parcialmente Acessível</option>
+                        <option value="inacessivel">Inacessível / Danificado</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="comentario">Seu Comentário / Avaliação:</label>
+                    <textarea id="comentario" rows="3" placeholder="Escreva sobre a entrada, atendimento ou facilidade de acesso..." required></textarea>
+                </div>
+
+                <button type="submit">Publicar Avaliação</button>
+            </form>
+
+            <hr style="margin: 20px 0;">
+
+            <h3>Estabelecimentos Avaliados</h3>
+            <div class="form-group" style="margin-top: 8px;">
+                <input type="text" id="filtroPontos" placeholder="🔍 Pesquisar por cidade ou estabelecimento...">
+            </div>
+            <div id="pointsList"></div>
+        </aside>
+
+        <main id="map"></main>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        const API_URL = '/api/pontos';
+        let map;
+        let tempMarker = null;
+        let markers = [];
+        let poiLayerGroup = null;
+        let cidadeAtual = "Curitiba";
+        let todasCidadesPR = [];
+        let todosPontosCache = [];
+        let timerBuscaPOI = null;
+        let abortControllerPOI = null;
+
+        // Cache em memória para não recarregar áreas já visitadas (resposta instantânea)
+        const cacheEstabelecimentos = new Map();
+
+        const coordenadasRapidasPR = {
+            "Curitiba": [-25.4284, -49.2733],
+            "Londrina": [-23.3103, -51.1628],
+            "Maringá": [-23.4209, -51.9331],
+            "Ponta Grossa": [-25.0945, -50.1619],
+            "Cascavel": [-24.9555, -53.4552],
+            "São José dos Pinhais": [-25.5313, -49.2031],
+            "Foz do Iguaçu": [-25.5163, -54.5854],
+            "Colombo": [-25.2925, -49.2262],
+            "Guarapuava": [-25.3902, -51.4623],
+            "Paranaguá": [-25.5161, -48.5225],
+            "Araucária": [-25.5859, -49.4047],
+            "Toledo": [-24.7198, -53.7434],
+            "Apucarana": [-23.5508, -51.4614],
+            "Campo Largo": [-25.4525, -49.5290],
+            "Pinhais": [-25.4429, -49.1927],
+            "Arapongas": [-23.4153, -51.4259],
+            "Almirante Tamandaré": [-25.3188, -49.3037],
+            "Umuarama": [-23.7661, -53.3206],
+            "Piraquara": [-25.4422, -49.0624],
+            "Cambé": [-23.2768, -51.2797],
+            "Campo Mourão": [-24.0463, -52.3780],
+            "Fazenda Rio Grande": [-25.6624, -49.3073],
+            "Sarandi": [-23.4442, -51.8760],
+            "Francisco Beltrão": [-26.0817, -53.0535],
+            "Paranavaí": [-23.0816, -52.4617],
+            "Pato Branco": [-26.2292, -52.6706],
+            "Cianorte": [-23.6633, -52.6056],
+            "Telêmaco Borba": [-24.3245, -50.6176],
+            "Castro": [-24.7891, -50.0108],
+            "Rolândia": [-23.3102, -51.3659]
+        };
+
+        function removerAcentos(texto) {
+            return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        }
+
+        async function carregarTodasCidadesPR() {
+            const cacheSalvo = localStorage.getItem('cidades_pr_ibge');
+            if (cacheSalvo) {
+                todasCidadesPR = JSON.parse(cacheSalvo);
+                return;
+            }
+            try {
+                const resp = await fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados/PR/municipios?orderBy=nome');
+                if (!resp.ok) throw new Error("Falha IBGE");
+                const dados = await resp.json();
+                todasCidadesPR = dados.map(m => m.nome);
+                localStorage.setItem('cidades_pr_ibge', JSON.stringify(todasCidadesPR));
+            } catch (e) {
+                todasCidadesPR = Object.keys(coordenadasRapidasPR).sort();
+            }
+        }
+
+        function configurarBuscaCidades() {
+            const input = document.getElementById('cidadeInput');
+            const dropdown = document.getElementById('cidadeDropdown');
+
+            function mostrarSugestoes(termo) {
+                const busca = removerAcentos(termo.trim());
+                dropdown.innerHTML = '';
+
+                const filtradas = todasCidadesPR.filter(cidade =>
+                    removerAcentos(cidade).includes(busca)
+                );
+
+                if (filtradas.length === 0) {
+                    dropdown.style.display = 'none';
+                    return;
+                }
+
+                filtradas.slice(0, 40).forEach(cidade => {
+                    const item = document.createElement('div');
+                    item.className = 'autocomplete-item';
+                    item.textContent = `${cidade} - PR`;
+                    item.onclick = () => selecionarCidade(cidade);
+                    dropdown.appendChild(item);
+                });
+
+                dropdown.style.display = 'block';
+            }
+
+            input.addEventListener('input', () => mostrarSugestoes(input.value));
+            input.addEventListener('focus', () => mostrarSugestoes(input.value));
+
+            document.addEventListener('click', (e) => {
+                if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        }
+
+        async function selecionarCidade(nomeCidade) {
+            const input = document.getElementById('cidadeInput');
+            const dropdown = document.getElementById('cidadeDropdown');
+            const infoBadge = document.getElementById('cidadeAtivaInfo');
+
+            input.value = nomeCidade;
+            dropdown.style.display = 'none';
+            cidadeAtual = nomeCidade;
+            infoBadge.innerHTML = `⏳ Buscando mapa de <strong>${nomeCidade} - PR</strong>...`;
+
+            if (coordenadasRapidasPR[nomeCidade]) {
+                const [lat, lng] = coordenadasRapidasPR[nomeCidade];
+                map.setView([lat, lng], 15);
+                infoBadge.innerHTML = `📍 Mapa focado em: <strong>${nomeCidade} - PR</strong>`;
+                return;
+            }
+
+            try {
+                const query = encodeURIComponent(`${nomeCidade}, Paraná, Brasil`);
+                const resp = await fetch(`https://photon.komoot.io/api/?q=${query}&limit=1`);
+                const data = await resp.json();
+
+                if (data.features && data.features.length > 0) {
+                    const [lng, lat] = data.features[0].geometry.coordinates;
+                    map.setView([lat, lng], 15);
+                    infoBadge.innerHTML = `📍 Mapa focado em: <strong>${nomeCidade} - PR</strong>`;
+                    return;
+                }
+            } catch (e) {
+                console.warn("Tentando busca alternativa de cidade...");
+            }
+
+            infoBadge.innerHTML = `📍 Cidade selecionada: <strong>${nomeCidade} - PR</strong>`;
+        }
+
+        function garantirLeaflet(callback) {
+            if (typeof L !== 'undefined') {
+                callback();
+                return;
+            }
+            const cssBackup = document.createElement('link');
+            cssBackup.rel = 'stylesheet';
+            cssBackup.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+            document.head.appendChild(cssBackup);
+
+            const scriptBackup = document.createElement('script');
+            scriptBackup.src = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+            scriptBackup.onload = callback;
+            document.body.appendChild(scriptBackup);
+        }
+
+        function traduzirCategoria(tags) {
+            const mapaCategorias = {
+                supermarket: "Supermercado",
+                convenience: "Mercado",
+                bakery: "Padaria",
+                pharmacy: "Farmácia",
+                hospital: "Hospital",
+                clinic: "Clínica Médica",
+                school: "Escola / Colégio",
+                university: "Faculdade",
+                bank: "Banco",
+                restaurant: "Restaurante",
+                fast_food: "Lanchonete",
+                cafe: "Cafeteria",
+                clothes: "Loja",
+                hardware: "Materiais de Construção",
+                fuel: "Posto de Combustível",
+                police: "Polícia",
+                post_office: "Correios",
+                library: "Biblioteca"
+            };
+            const chave = tags.amenity || tags.shop || tags.healthcare || "";
+            return mapaCategorias[chave] || "Estabelecimento";
+        }
+
+        function selecionarEstabelecimentoDoMapa(nome, categoria, lat, lng) {
+            document.getElementById('lat').value = lat.toFixed(6);
+            document.getElementById('lng').value = lng.toFixed(6);
+            document.getElementById('estabelecimento').value = nome;
+
+            if (tempMarker) map.removeLayer(tempMarker);
+            tempMarker = L.circleMarker([lat, lng], {
+                radius: 13,
+                color: '#0056b3',
+                fillColor: '#007bff',
+                fillOpacity: 0.45
+            }).addTo(map);
+
+            document.getElementById('pinStatus').innerHTML = `✅ <strong>${nome}</strong> (${categoria}) selecionado! Comente abaixo.`;
+            document.getElementById('pinStatus').style.borderLeftColor = '#28a745';
+            document.getElementById('comentario').focus();
+        }
+
+        function desenharEstabelecimentosNoMapa(elementos) {
+            poiLayerGroup.clearLayers();
+            const iconeEstabelecimento = L.divIcon({
+                className: '',
+                html: '<div class="poi-pin" title="Clique para avaliar">🏪</div>',
+                iconSize: [26, 26],
+                iconAnchor: [13, 13]
+            });
+
+            elementos.forEach(el => {
+                if (!el.lat || !el.lon || !el.tags || !el.tags.name) return;
+                const nome = el.tags.name;
+                const categoria = traduzirCategoria(el.tags);
+
+                const marker = L.marker([el.lat, el.lon], { icon: iconeEstabelecimento });
+                marker.bindTooltip(`🏪 ${nome} (${categoria})`, { direction: 'top' });
+
+                marker.on('click', () => {
+                    selecionarEstabelecimentoDoMapa(nome, categoria, el.lat, el.lon);
+                    marker.bindPopup(`<b>🏪 ${nome}</b><br><small>${categoria}</small><br><span style="color:#28a745;font-weight:bold;">✔ Selecionado!</span>`).openPopup();
+                });
+
+                poiLayerGroup.addLayer(marker);
+            });
+
+            document.getElementById('poiCounter').textContent = `🏪 ${elementos.length} estabelecimentos visíveis`;
+        }
+
+        // Busca ultra-rápida usando raio de 1.5km ao redor do centro (apenas nós) + cache
+        async function buscarEstabelecimentosNaArea(forcarAtualizacao = false) {
+            if (!map) return;
+            const counter = document.getElementById('poiCounter');
+
+            if (map.getZoom() < 13) {
+                counter.textContent = "🔍 Aproxime o zoom para ver estabelecimentos";
+                return;
+            }
+
+            const center = map.getCenter();
+            const chaveCache = `${center.lat.toFixed(2)},${center.lng.toFixed(2)}`;
+
+            // Se já visitou essa região, desenha em 0 milissegundos
+            if (!forcarAtualizacao && cacheEstabelecimentos.has(chaveCache)) {
+                desenharEstabelecimentosNoMapa(cacheEstabelecimentos.get(chaveCache));
+                return;
+            }
+
+            // Cancela requisição anterior se o usuário ainda estiver movendo o mapa
+            if (abortControllerPOI) abortControllerPOI.abort();
+            abortControllerPOI = new AbortController();
+
+            counter.textContent = "⚡ Buscando locais próximos...";
+
+            const lat = center.lat.toFixed(4);
+            const lng = center.lng.toFixed(4);
+            // Consulta leve apenas em nós dentro de 1.500 metros (muito mais rápida que bounding box)
+            const query = `[out:json][timeout:5];(node(around:1500,${lat},${lng})["name"]["amenity"];node(around:1500,${lat},${lng})["name"]["shop"];);out body 75;`;
+
+            const servidores = [
+                'https://overpass.kumi.systems/api/interpreter',
+                'https://overpass-api.de/api/interpreter'
+            ];
+
+            for (const url of servidores) {
+                try {
+                    const resp = await fetch(url, {
+                        method: 'POST',
+                        body: 'data=' + encodeURIComponent(query),
+                        signal: abortControllerPOI.signal
+                    });
+                    if (!resp.ok) continue;
+                    const data = await resp.json();
+                    const elementos = data.elements || [];
+
+                    cacheEstabelecimentos.set(chaveCache, elementos);
+                    desenharEstabelecimentosNoMapa(elementos);
+                    return;
+                } catch (e) {
+                    if (e.name === 'AbortError') return;
+                }
+            }
+
+            counter.textContent = "📍 Clique em qualquer ponto do mapa para marcar";
+        }
+
+        function initMap() {
+            map = L.map('map').setView([-25.4284, -49.2733], 15);
+
+            const mapaRuas = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri',
+                maxZoom: 19
+            });
+
+            const mapaCarto = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; CARTO',
+                subdomains: 'abcd',
+                maxZoom: 20
+            });
+
+            const mapaSatelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri',
+                maxZoom: 19
+            });
+
+            mapaRuas.addTo(map);
+            poiLayerGroup = L.layerGroup().addTo(map);
+
+            mapaRuas.on('tileerror', function() {
+                if (!map.hasLayer(mapaCarto)) mapaCarto.addTo(map);
+            });
+
+            L.control.layers(
+                {
+                    "Mapa de Ruas": mapaRuas,
+                    "Mapa Alternativo": mapaCarto,
+                    "Satélite": mapaSatelite
+                },
+                {
+                    "🏪 Estabelecimentos": poiLayerGroup
+                }
+            ).addTo(map);
+
+            const legend = L.control({ position: 'bottomright' });
+            legend.onAdd = function() {
+                const div = L.DomUtil.create('div', 'map-legend');
+                div.innerHTML = `
+                    <strong>Legenda</strong><br>
+                    <span>🏪 Estabelecimento (clique)</span><br>
+                    <span><i class="legend-dot" style="background:#28a745;"></i>Totalmente Acessível</span><br>
+                    <span><i class="legend-dot" style="background:#ffc107;"></i>Parcialmente Acessível</span><br>
+                    <span><i class="legend-dot" style="background:#dc3545;"></i>Inacessível</span>
+                `;
+                return div;
+            };
+            legend.addTo(map);
+
+            map.on('click', function(e) {
+                const lat = e.latlng.lat.toFixed(6);
+                const lng = e.latlng.lng.toFixed(6);
+
+                document.getElementById('lat').value = lat;
+                document.getElementById('lng').value = lng;
+
+                if (tempMarker) map.removeLayer(tempMarker);
+                tempMarker = L.circleMarker([lat, lng], {
+                    radius: 10,
+                    color: '#0056b3',
+                    fillColor: '#007bff',
+                    fillOpacity: 0.85
+                }).addTo(map);
+
+                document.getElementById('pinStatus').innerHTML = `✅ <strong>Ponto marcado em ${cidadeAtual}!</strong> Digite o nome e comente.`;
+                document.getElementById('pinStatus').style.borderLeftColor = '#28a745';
+            });
+
+            map.on('moveend', function() {
+                clearTimeout(timerBuscaPOI);
+                timerBuscaPOI = setTimeout(() => buscarEstabelecimentosNaArea(false), 300);
+            });
+
+            carregarPontos();
+            buscarEstabelecimentosNaArea(false);
+        }
+
+        function obterPontosLocais() {
+            const salvos = localStorage.getItem('pontos_acessibilidade_pr');
+            if (salvos) return JSON.parse(salvos);
+            return [
+                {
+                    estado: "PR",
+                    cidade: "Curitiba",
+                    estabelecimento: "Praça Tiradentes",
+                    tipo: "Rampa de Acesso",
+                    status: "total",
+                    lat: -25.4284,
+                    lng: -49.2733,
+                    comentario: "Rampa com piso antiderrapante e corrimão duplo."
+                },
+                {
+                    estado: "PR",
+                    cidade: "Toledo",
+                    estabelecimento: "Parque Ecológico Diva Paim Barth",
+                    tipo: "Piso Tátil",
+                    status: "total",
+                    lat: -24.7252,
+                    lng: -53.7418,
+                    comentario: "Calçadas largas, niveladas e com rampas nas travessias."
+                }
+            ];
+        }
+
+        async function carregarPontos() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error("Servidor Java offline");
+                todosPontosCache = await response.json();
+            } catch (error) {
+                todosPontosCache = obterPontosLocais();
+            }
+            filtrarPontos();
+        }
+
+        function filtrarPontos() {
+            const termo = removerAcentos(document.getElementById('filtroPontos').value.trim());
+            const filtrados = todosPontosCache.filter(pt => {
+                const texto = removerAcentos(`${pt.estabelecimento} ${pt.cidade || ''} ${pt.tipo} ${pt.comentario}`);
+                return texto.includes(termo);
+            });
+            renderizarPontos(filtrados);
+        }
+
+        document.getElementById('filtroPontos').addEventListener('input', filtrarPontos);
+
+        document.getElementById('locationForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const lat = document.getElementById('lat').value;
+            const lng = document.getElementById('lng').value;
+
+            if (!lat || !lng) {
+                alert("Clique em um estabelecimento roxo (🏪) ou em qualquer ponto do mapa antes de publicar!");
+                return;
+            }
+
+            const novoPonto = {
+                estado: "PR",
+                cidade: cidadeAtual,
+                estabelecimento: document.getElementById('estabelecimento').value,
+                tipo: document.getElementById('type').value,
+                status: document.getElementById('status').value,
+                lat: parseFloat(lat),
+                lng: parseFloat(lng),
+                comentario: document.getElementById('comentario').value
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(novoPonto)
+                });
+                if (!response.ok) throw new Error("Servidor Java offline");
+            } catch (error) {
+                const lista = obterPontosLocais();
+                lista.push(novoPonto);
+                localStorage.setItem('pontos_acessibilidade_pr', JSON.stringify(lista));
+            }
+
+            this.reset();
+            if (tempMarker) map.removeLayer(tempMarker);
+            document.getElementById('lat').value = '';
+            document.getElementById('lng').value = '';
+            document.getElementById('pinStatus').innerHTML = `📍 <strong>Clique em um estabelecimento roxo (🏪)</strong> no mapa ou em qualquer local da rua para avaliar.`;
+            document.getElementById('pinStatus').style.borderLeftColor = '#0056b3';
+
+            carregarPontos();
+        });
+
+        function renderizarPontos(pontos) {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            const pointsList = document.getElementById('pointsList');
+            pointsList.innerHTML = '';
+
+            const cores = {
+                total: '#28a745',
+                parcial: '#ffc107',
+                inacessivel: '#dc3545'
+            };
+
+            pontos.forEach(pt => {
+                const cor = cores[pt.status] || '#0056b3';
+                const marker = L.circleMarker([pt.lat, pt.lng], {
+                    radius: 10,
+                    color: '#ffffff',
+                    weight: 2,
+                    fillColor: cor,
+                    fillOpacity: 0.95
+                }).addTo(map).bindPopup(`
+                    <b>${pt.estabelecimento}</b> (${pt.cidade || 'PR'})<br>
+                    <strong>Recurso:</strong> ${pt.tipo}<br>
+                    <strong>Status:</strong> ${pt.status}<br>
+                    <p style="margin-top:5px;"><em>"${pt.comentario}"</em></p>
+                `);
+                markers.push(marker);
+
+                const statusLabel = pt.status === 'total' ? 'Total' : pt.status === 'parcial' ? 'Parcial' : 'Inacessível';
+                const badgeClass = `badge badge-${pt.status}`;
+
+                const card = document.createElement('div');
+                card.className = 'point-card';
+                card.innerHTML = `
+                    <strong>${pt.estabelecimento}</strong> <span class="${badgeClass}">${statusLabel}</span>
+                    <br><small>📍 ${pt.cidade || 'Paraná'}</small>
+                    <br><small>♿ ${pt.tipo}</small>
+                    <p style="margin-top: 6px; font-size: 0.85rem; color: #444;">"${pt.comentario}"</p>
+                `;
+                card.onclick = () => {
+                    map.setView([pt.lat, pt.lng], 17);
+                    marker.openPopup();
+                };
+                pointsList.appendChild(card);
+            });
+        }
+
+        window.onload = function() {
+            carregarTodasCidadesPR();
+            configurarBuscaCidades();
+            garantirLeaflet(initMap);
+        };
+    </script>
+</body>
+</html>
